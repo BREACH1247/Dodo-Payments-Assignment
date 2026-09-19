@@ -89,4 +89,6 @@ The seven integration tests exercise concurrent payment reservation, cross-invoi
 
 ## Demo Video
 
-**Submission action required:** add your publicly accessible 5–10 minute video link here before submitting. Show, in order: architecture, a live success and decline demo with webhook logs, an unscripted state-machine explanation, and one failure-mode walkthrough in the code. The collection also includes a timeout scenario if you want to demonstrate it. Record and explain the design in your own words; the repository cannot supply that personal walkthrough.
+1. [Part 1](https://www.loom.com/share/920ea107074d4c4abe96edeffabbaf02)
+2. [Part 2](https://www.loom.com/share/6cc6cf8c546c48f0983bacca72d1614b)
+3. [Part 3](https://www.loom.com/share/a7b121d44ac64bf0944cf4e62ff969fd)
