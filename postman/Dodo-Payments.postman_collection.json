@@ -1,0 +1,213 @@
+{
+  "info": {
+    "_postman_id": "1675de81-7bd7-4b85-9bb1-998b225a6f1e",
+    "name": "Dodo Payments — Video Demo Scenarios",
+    "description": "Import this collection and Dodo-Payments.local.postman_environment.json. Start Docker Compose, select the local environment, run Shared setup once, then run the Success, Decline, and Timeout folders in order. Each request captures IDs automatically.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "0. Shared setup — run once",
+      "description": "Run these requests once after a database reset. Do not register the local webhook sink again for each scenario; one endpoint keeps the webhook logs easy to read.",
+      "item": [
+        {
+          "name": "1. Register local webhook sink",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"url\": \"http://mock-psp:3001/demo/webhook-sink\"\n}" },
+            "url": "{{baseUrl}}/webhook-endpoints"
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Webhook endpoint created', () => pm.response.to.have.status(201));",
+            "pm.environment.set('webhookEndpointId', pm.response.json().id);"
+          ]}}]
+        },
+        {
+          "name": "2. Create video-demo customer",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Video Demo\",\n  \"email\": \"video@example.test\"\n}" },
+            "url": "{{baseUrl}}/customers"
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Customer created', () => pm.response.to.have.status(201));",
+            "pm.environment.set('customerId', pm.response.json().id);"
+          ]}}]
+        }
+      ]
+    },
+    {
+      "name": "1. Success — tok_success",
+      "description": "Expected final result: payment attempt succeeded; invoice paid; invoice.paid webhook delivered.",
+      "item": [
+        {
+          "name": "1. Create success invoice",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"customer_id\": \"{{customerId}}\",\n  \"due_date\": \"2026-12-31\",\n  \"items\": [{\n    \"description\": \"Successful demo service\",\n    \"quantity\": 2,\n    \"unit_amount_cents\": 1250\n  }]\n}" },
+            "url": "{{baseUrl}}/invoices"
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Success invoice created', () => pm.response.to.have.status(201));",
+            "pm.test('Server total is 2500 cents', () => pm.expect(pm.response.json().total_cents).to.eql(2500));",
+            "pm.environment.set('successInvoiceId', pm.response.json().id);"
+          ]}}]
+        },
+        {
+          "name": "2. Pay success invoice",
+          "event": [
+            { "listen": "prerequest", "script": { "type": "text/javascript", "exec": ["pm.environment.set('successIdempotencyKey', pm.variables.replaceIn('{{$guid}}'));" ]}},
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('Payment accepted asynchronously', () => pm.response.to.have.status(202));",
+              "pm.environment.set('successAttemptId', pm.response.json().attempt_id);"
+            ]}}
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{apiKey}}" },
+              { "key": "Idempotency-Key", "value": "{{successIdempotencyKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"mock_card_token\": \"tok_success\"\n}" },
+            "url": "{{baseUrl}}/invoices/{{successInvoiceId}}/pay"
+          }
+        },
+        {
+          "name": "3. Poll success attempt",
+          "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{apiKey}}" }], "url": "{{baseUrl}}/payment-attempts/{{successAttemptId}}" },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Attempt is pending or succeeded', () => pm.expect(['pending', 'succeeded']).to.include(pm.response.json().status));"
+          ]}}]
+        },
+        {
+          "name": "4. Inspect PSP charge",
+          "request": { "method": "GET", "header": [], "url": "{{pspBaseUrl}}/charges/{{successAttemptId}}" }
+        }
+      ]
+    },
+    {
+      "name": "2. Decline — tok_card_declined",
+      "description": "Expected final result: payment attempt failed with card_declined; invoice remains open; invoice.payment_failed webhook delivered.",
+      "item": [
+        {
+          "name": "1. Create decline invoice",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"customer_id\": \"{{customerId}}\",\n  \"due_date\": \"2026-12-31\",\n  \"items\": [{\n    \"description\": \"Declined demo service\",\n    \"quantity\": 1,\n    \"unit_amount_cents\": 1250\n  }]\n}" },
+            "url": "{{baseUrl}}/invoices"
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Decline invoice created', () => pm.response.to.have.status(201));",
+            "pm.environment.set('declineInvoiceId', pm.response.json().id);"
+          ]}}]
+        },
+        {
+          "name": "2. Pay decline invoice",
+          "event": [
+            { "listen": "prerequest", "script": { "type": "text/javascript", "exec": ["pm.environment.set('declineIdempotencyKey', pm.variables.replaceIn('{{$guid}}'));" ]}},
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('Payment accepted asynchronously', () => pm.response.to.have.status(202));",
+              "pm.environment.set('declineAttemptId', pm.response.json().attempt_id);"
+            ]}}
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{apiKey}}" },
+              { "key": "Idempotency-Key", "value": "{{declineIdempotencyKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"mock_card_token\": \"tok_card_declined\"\n}" },
+            "url": "{{baseUrl}}/invoices/{{declineInvoiceId}}/pay"
+          }
+        },
+        {
+          "name": "3. Poll decline attempt",
+          "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{apiKey}}" }], "url": "{{baseUrl}}/payment-attempts/{{declineAttemptId}}" },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Attempt is pending or failed', () => pm.expect(['pending', 'failed']).to.include(pm.response.json().status));",
+            "if (pm.response.json().status === 'failed') { pm.test('Failure is card declined', () => pm.expect(pm.response.json().failure_code).to.eql('card_declined')); }"
+          ]}}]
+        }
+      ]
+    },
+    {
+      "name": "3. Timeout — tok_timeout",
+      "description": "Expected final result: POST /pay returns 202 promptly; worker reconciles the PSP's already-recorded success; invoice becomes paid without a second charge.",
+      "item": [
+        {
+          "name": "1. Create timeout invoice",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"customer_id\": \"{{customerId}}\",\n  \"due_date\": \"2026-12-31\",\n  \"items\": [{\n    \"description\": \"Timeout demo service\",\n    \"quantity\": 1,\n    \"unit_amount_cents\": 3000\n  }]\n}" },
+            "url": "{{baseUrl}}/invoices"
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Timeout invoice created', () => pm.response.to.have.status(201));",
+            "pm.environment.set('timeoutInvoiceId', pm.response.json().id);"
+          ]}}]
+        },
+        {
+          "name": "2. Pay timeout invoice",
+          "event": [
+            { "listen": "prerequest", "script": { "type": "text/javascript", "exec": ["pm.environment.set('timeoutIdempotencyKey', pm.variables.replaceIn('{{$guid}}'));" ]}},
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('Payment reservation returns quickly', () => pm.response.to.have.status(202));",
+              "pm.environment.set('timeoutAttemptId', pm.response.json().attempt_id);"
+            ]}}
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{apiKey}}" },
+              { "key": "Idempotency-Key", "value": "{{timeoutIdempotencyKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"mock_card_token\": \"tok_timeout\"\n}" },
+            "url": "{{baseUrl}}/invoices/{{timeoutInvoiceId}}/pay"
+          }
+        },
+        {
+          "name": "3. Poll timeout attempt",
+          "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{apiKey}}" }], "url": "{{baseUrl}}/payment-attempts/{{timeoutAttemptId}}" },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Attempt is pending or succeeded', () => pm.expect(['pending', 'succeeded']).to.include(pm.response.json().status));"
+          ]}}]
+        },
+        {
+          "name": "4. Inspect reconciled PSP charge",
+          "request": { "method": "GET", "header": [], "url": "{{pspBaseUrl}}/charges/{{timeoutAttemptId}}" }
+        }
+      ]
+    },
+    {
+      "name": "4. Reconcile events",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{apiKey}}" }],
+        "url": "{{baseUrl}}/events?after_id=0&limit=100"
+      }
+    }
+  ]
+}

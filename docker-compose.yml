@@ -1,0 +1,73 @@
+# One-command local API, PostgreSQL, and mock PSP stack.
+services:
+  db:
+    image: postgres:16-bookworm
+    environment:
+      POSTGRES_USER: dodo
+      POSTGRES_PASSWORD: dodo_local_only
+      POSTGRES_DB: dodo
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dodo -d dodo"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  api:
+    build: .
+    command: ["api"]
+    environment:
+      DATABASE_URL: postgres://dodo:dodo_local_only@db:5432/dodo
+      PSP_URL: http://mock-psp:3001
+      DEMO_API_KEY: dodo_test_demo_key_for_local_only_0123456789abcdef
+      RUST_LOG: info
+    ports:
+      - "3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:3000/health"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  mock-psp:
+    build: .
+    command: ["mock-psp"]
+    environment:
+      DATABASE_URL: postgres://dodo:dodo_local_only@db:5432/dodo
+      RUST_LOG: info
+    ports:
+      - "3001:3001"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:3001/health"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  tests:
+    profiles: ["test"]
+    build:
+      context: .
+      target: builder
+    command: ["cargo", "test", "--locked", "--test", "integration", "--", "--test-threads=1"]
+    environment:
+      DATABASE_URL: postgres://dodo:dodo_local_only@db:5432/dodo
+      API_BASE: http://api:3000
+      PSP_BASE: http://mock-psp:3001
+      DEMO_API_KEY: dodo_test_demo_key_for_local_only_0123456789abcdef
+    depends_on:
+      api:
+        condition: service_healthy
+      mock-psp:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
